@@ -78,7 +78,8 @@ app.get("/", async (req, res) => {
     `);
   } catch (error) {
     console.error(error);
-    res.status(500).send("Failed to load messages to");
+
+    res.status(500).send("Failed to load messages to screen");
   }
 });
 
