@@ -16,5 +16,12 @@ pipeline {
                 sh 'ls -la'
             }
         }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image for Node.js application'
+                sh 'docker build -t devops-1-app:latest .'
+            }
+        }
     }
 }
