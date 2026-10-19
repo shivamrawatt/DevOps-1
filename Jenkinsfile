@@ -20,7 +20,43 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 echo 'Building Docker image for Node.js application'
-                sh 'docker build -t devops-1-app:latest .'
+
+                sh '''
+                    docker build \
+                        -t devops-1-app:latest \
+                        -t devops-1-app:v${BUILD_NUMBER} .
+                '''
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                echo 'Pushing versioned Docker image to Docker Hub'
+
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKERHUB_USER',
+                    passwordVariable: 'DOCKERHUB_TOKEN'
+                )]) {
+                    sh '''
+                        echo "$DOCKERHUB_TOKEN" | docker login \
+                            -u "$DOCKERHUB_USER" --password-stdin
+
+                        docker tag devops-1-app:latest \
+                            "$DOCKERHUB_USER/devops-1-app:latest"
+
+                        docker tag devops-1-app:latest \
+                            "$DOCKERHUB_USER/devops-1-app:v${BUILD_NUMBER}"
+
+                        docker push \
+                            "$DOCKERHUB_USER/devops-1-app:v${BUILD_NUMBER}"
+
+                        docker push \
+                            "$DOCKERHUB_USER/devops-1-app:latest"
+
+                        docker logout
+                    '''
+                }
             }
         }
 
