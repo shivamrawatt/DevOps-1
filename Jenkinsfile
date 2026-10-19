@@ -29,6 +29,18 @@ pipeline {
             }
         }
 
+        
+stage('Approve Docker Hub Push') {
+    steps {
+        input(
+            message: "Do you want to push version v${BUILD_NUMBER} to Docker Hub?",
+            ok: 'Proceed',
+            submitter: ''
+        )
+    }
+}
+
+
         stage('Push to Docker Hub') {
             steps {
                 echo 'Pushing versioned Docker image to Docker Hub'
@@ -59,6 +71,18 @@ pipeline {
                 }
             }
         }
+
+        
+stage('Approve Docker Deployment') {
+    steps {
+        input(
+            message: "Do you want to deploy version v${BUILD_NUMBER} to the Docker container?",
+            ok: 'Deploy',
+            submitter: ''
+        )
+    }
+}
+
 
         stage('Deploy Application') {
             steps {
