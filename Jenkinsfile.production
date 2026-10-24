@@ -1,0 +1,128 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Validate Configuration') {
+            steps {
+                echo 'Validating production deployment configuration'
+
+                sh '''
+                    command -v ssh
+                    command -v scp
+                '''
+            }
+        }
+
+        stage('Approve Production Deployment') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'prod-docker-image',
+                        variable: 'DOCKER_IMAGE'
+                    ),
+                    string(
+                        credentialsId: 'prod-image-tag',
+                        variable: 'DOCKER_TAG'
+                    )
+                ]) {
+                    input(
+                        message: "Deploy ${DOCKER_IMAGE}:${DOCKER_TAG} to production EC2?",
+                        ok: 'Deploy',
+                        submitter: ''
+                    )
+                }
+            }
+        }
+
+        stage('Deploy to EC2') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'prod-docker-image',
+                        variable: 'DOCKER_IMAGE'
+                    ),
+                    string(
+                        credentialsId: 'prod-image-tag',
+                        variable: 'DOCKER_TAG'
+                    ),
+                    string(
+                        credentialsId: 'ec2-public-ip',
+                        variable: 'EC2_HOST'
+                    ),
+                    file(
+                        credentialsId: 'devops-1-prod-env',
+                        variable: 'ENV_FILE'
+                    )
+                ]) {
+                    sshagent(credentials: ['ec2-ssh-key']) {
+                        sh '''
+                            set -eu
+
+                            IMAGE="${DOCKER_IMAGE}:${DOCKER_TAG}"
+                            REMOTE="ubuntu@${EC2_HOST}"
+                            ENV_PATH="/home/ubuntu/devops-1-prod.env"
+
+                            echo "Deploying the configured production image"
+
+                            echo "Checking Docker network..."
+                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                                "docker network inspect devops-1-network >/dev/null"
+
+                            echo "Pulling Docker image..."
+                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                                "docker pull '$IMAGE'"
+
+                            echo "Transferring production environment file..."
+                            scp -o StrictHostKeyChecking=accept-new \
+                                "$ENV_FILE" "$REMOTE:$ENV_PATH"
+
+                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                                "chmod 600 '$ENV_PATH'"
+
+                            echo "Removing the existing application container..."
+                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                                "docker rm -f DevOps-1-app || true"
+
+                            echo "Starting the new application container..."
+                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                                "docker run -d \
+                                    --name DevOps-1-app \
+                                    --restart unless-stopped \
+                                    --network devops-1-network \
+                                    --env-file '$ENV_PATH' \
+                                    -p 5000:5000 \
+                                    '$IMAGE'"
+
+                            echo "Checking container status..."
+                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                                "test \\"\\$(docker inspect -f '{{.State.Running}}' DevOps-1-app)\\" = true"
+
+                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                                "rm -f '$ENV_PATH'"
+
+                            echo "Displaying recent application logs..."
+                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                                "docker logs --tail 50 DevOps-1-app"
+
+                            echo "Production deployment completed."
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Production CD pipeline completed successfully.'
+        }
+
+        failure {
+            echo 'Production deployment failed. Check the Jenkins console output.'
+        }
+
+        always {
+            echo 'Production CD execution finished.'
+        }
+    }
+}

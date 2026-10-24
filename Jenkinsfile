@@ -17,6 +17,27 @@ pipeline {
             }
         }
 
+        stage('Install Dependencies') {
+            steps {
+                echo 'Installing Node.js dependencies'
+                sh 'npm ci'
+            }
+        }
+
+        stage('ESLint') {
+            steps {
+                echo 'Checking JavaScript code quality'
+                sh 'npm run lint'
+            }
+        }
+
+        stage('Jest Testing') {
+            steps {
+                echo 'Running Jest tests'
+                sh 'npm test -- --runInBand'
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
                 echo 'Building Docker image for Node.js application'
@@ -29,17 +50,15 @@ pipeline {
             }
         }
 
-        
-stage('Approve Docker Hub Push') {
-    steps {
-        input(
-            message: "Do you want to push version v${BUILD_NUMBER} to Docker Hub?",
-            ok: 'Proceed',
-            submitter: ''
-        )
-    }
-}
-
+        stage('Approve Docker Hub Push') {
+            steps {
+                input(
+                    message: "Do you want to push version v${BUILD_NUMBER} to Docker Hub?",
+                    ok: 'Proceed',
+                    submitter: ''
+                )
+            }
+        }
 
         stage('Push to Docker Hub') {
             steps {
@@ -51,8 +70,11 @@ stage('Approve Docker Hub Push') {
                     passwordVariable: 'DOCKERHUB_TOKEN'
                 )]) {
                     sh '''
+                        set -eu
+
                         echo "$DOCKERHUB_TOKEN" | docker login \
-                            -u "$DOCKERHUB_USER" --password-stdin
+                            -u "$DOCKERHUB_USER" \
+                            --password-stdin
 
                         docker tag devops-1-app:latest \
                             "$DOCKERHUB_USER/devops-1-app:latest"
@@ -71,40 +93,19 @@ stage('Approve Docker Hub Push') {
                 }
             }
         }
-
-        
-stage('Approve Docker Deployment') {
-    steps {
-        input(
-            message: "Do you want to deploy version v${BUILD_NUMBER} to the Docker container?",
-            ok: 'Deploy',
-            submitter: ''
-        )
     }
-}
 
+    post {
+        success {
+            echo 'CI pipeline completed successfully.'
+        }
 
-        stage('Deploy Application') {
-            steps {
-                echo 'Deploying Node.js application'
+        failure {
+            echo 'CI pipeline failed. Check the failed stage in the Jenkins console output.'
+        }
 
-                withCredentials([file(
-                    credentialsId: 'devops-1-env',
-                    variable: 'ENV_FILE'
-                )]) {
-                    sh '''
-                        docker rm -f DevOps-1-app || true
-
-                        docker run -d \
-                            --name DevOps-1-app \
-                            --restart unless-stopped \
-                            --network devops-1-network \
-                            --env-file "$ENV_FILE" \
-                            -p 5000:5000 \
-                            devops-1-app:latest
-                    '''
-                }
-            }
+        always {
+            echo 'CI pipeline execution finished.'
         }
     }
 }
