@@ -1,0 +1,48 @@
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Create MySQL on EC2') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'ec2-public-ip',
+                        variable: 'EC2_HOST'
+                    ),
+                    string(
+                        credentialsId: 'mysql-root-password',
+                        variable: 'MYSQL_ROOT_PASSWORD'
+                    ),
+                    string(
+                        credentialsId: 'mysql-app-password',
+                        variable: 'MYSQL_APP_PASSWORD'
+                    )
+                ]) {
+                    sshagent(credentials: ['ec2-ssh-key']) {
+                        sh '''
+                            ssh -o StrictHostKeyChecking=accept-new ubuntu@$EC2_HOST "
+                                docker network create devops-1-network 2>/dev/null || true
+
+                                docker volume create devops-1-mysql-data
+
+                                if ! docker container inspect DevOps-1 >/dev/null 2>&1; then
+                                    docker run -d \
+                                        --name DevOps-1 \
+                                        --restart unless-stopped \
+                                        --network devops-1-network \
+                                        -v devops-1-mysql-data:/var/lib/mysql \
+                                        -e MYSQL_ROOT_PASSWORD='$MYSQL_ROOT_PASSWORD' \
+                                        -e MYSQL_DATABASE=devops-1_db \
+                                        -e MYSQL_USER=shiv \
+                                        -e MYSQL_PASSWORD='$MYSQL_APP_PASSWORD' \
+                                        mysql:8.4
+                                fi
+                            "
+                        '''
+                    }
+                }
+            }
+        }
+    }
+}
