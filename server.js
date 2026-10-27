@@ -41,6 +41,30 @@ async function initDB() {
 }
 
 
+
+
+
+// Health check route for Jenkins deployment verification
+app.get("/api/health", async (req, res) => {
+  try {
+    // Verify that the application can connect to MySQL
+    await db.query("SELECT 1");
+
+    res.status(200).json({
+      status: "healthy",
+      message: "Backend and database are working",
+    });
+  } catch (error) {
+    console.error("Health check failed:", error.message);
+
+    res.status(503).json({
+      status: "unhealthy",
+      message: "Database connection failed",
+    });
+  }
+});
+
+
 // Home route: fetch and display messages
 app.get("/", async (req, res) => {
   try {
