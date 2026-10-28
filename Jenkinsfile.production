@@ -169,9 +169,9 @@ fi
 
 echo "Checking new application health..."
 
-for i in $(seq 1 12); do
-    if curl --connect-timeout 2 --max-time 5 -fsS \
-        http://localhost:5000/api/health; then
+for i in $(seq 1 5); do
+    if curl --connect-timeout 2 --max-time 4 -fsS \
+        http://localhost:5000/api/healt; then
 
         echo "Health check passed."
         echo "New deployment is healthy."
