@@ -36,100 +36,166 @@ pipeline {
         }
 
         stage('Deploy to EC2') {
-            steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'prod-docker-image',
-                        variable: 'DOCKER_IMAGE'
-                    ),
-                    string(
-                        credentialsId: 'prod-image-tag',
-                        variable: 'DOCKER_TAG'
-                    ),
-                    string(
-                        credentialsId: 'ec2-public-ip',
-                        variable: 'EC2_HOST'
-                    ),
-                    file(
-                        credentialsId: 'devops-1-prod-env',
-                        variable: 'ENV_FILE'
-                    )
-                ]) {
-                    sshagent(credentials: ['ec2-ssh-key']) {
-                        sh '''
-                            set -eu
+    steps {
+        withCredentials([
+            string(
+                credentialsId: 'prod-docker-image',
+                variable: 'DOCKER_IMAGE'
+            ),
+            string(
+                credentialsId: 'prod-image-tag',
+                variable: 'DOCKER_TAG'
+            ),
+            string(
+                credentialsId: 'ec2-public-ip',
+                variable: 'EC2_HOST'
+            ),
+            file(
+                credentialsId: 'devops-1-prod-env',
+                variable: 'ENV_FILE'
+            )
+        ]) {
+            sshagent(credentials: ['ec2-ssh-key']) {
+                sh '''
+                    set -eu
 
-                            IMAGE="${DOCKER_IMAGE}:${DOCKER_TAG}"
-                            REMOTE="ubuntu@${EC2_HOST}"
-                            ENV_PATH="/home/ubuntu/devops-1-prod.env"
+                    IMAGE="${DOCKER_IMAGE}:${DOCKER_TAG}"
+                    REMOTE="ubuntu@${EC2_HOST}"
+                    ENV_PATH="/home/ubuntu/devops-1-prod.env"
 
-                            echo "Deploying the configured production image"
+                    echo "Checking Docker network..."
 
-                            echo "Checking Docker network..."
-                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
-                                "docker network inspect devops-1-network >/dev/null"
+                    ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                        "docker network inspect devops-1-network >/dev/null"
 
-                            echo "Pulling Docker image..."
-                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
-                                "docker pull '$IMAGE'"
+                    echo "Pulling new Docker image..."
 
-                            echo "Transferring production environment file..."
-                            scp -o StrictHostKeyChecking=accept-new \
-                                "$ENV_FILE" "$REMOTE:$ENV_PATH"
+                    ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                        "docker pull '$IMAGE'"
 
-                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
-                                "chmod 600 '$ENV_PATH'"
+                    echo "Transferring production environment file..."
 
-                            echo "Removing the existing application container..."
-                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
-                                "docker rm -f DevOps-1-app || true"
+                    scp -o StrictHostKeyChecking=accept-new \
+                        "$ENV_FILE" "$REMOTE:$ENV_PATH"
 
-                            echo "Starting the new application container..."
-                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
-                                "docker run -d \
-                                    --name DevOps-1-app \
-                                    --restart unless-stopped \
-                                    --network devops-1-network \
-                                    --env-file '$ENV_PATH' \
-                                    -p 5000:5000 \
-                                    '$IMAGE'"
+                    ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                        "chmod 600 '$ENV_PATH'"
 
-                            echo "Checking container status..."
-                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
-                                "test \\"\\$(docker inspect -f '{{.State.Running}}' DevOps-1-app)\\" = true"
+                    echo "Starting deployment with rollback protection..."
 
-                            echo "Removing the environment file from EC2..."
-                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
-                                "rm -f '$ENV_PATH'"
+                    ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                        "bash -s -- '$IMAGE' '$ENV_PATH'" <<'REMOTE_SCRIPT'
 
-                            echo "Checking application health..."
+                    set -u
 
-                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" '
-                                for i in $(seq 1 12); do
-                                    if curl -fsS http://localhost:5000/api/healt; then
-                                        echo "Health check passed."
-                                        exit 0
-                                    fi
+                    IMAGE="$1"
+                    ENV_PATH="$2"
+                    PREVIOUS_IMAGE=$(docker inspect \
+                        --format='{{.Image}}' DevOps-1-app 2>/dev/null || true)
 
-                                    echo "Health check attempt $i failed. Retrying in 5 seconds..."
-                                    sleep 5
-                                done
+                    if [ -z "$PREVIOUS_IMAGE" ]; then
+                        echo "ERROR: No previous application image found."
+                        echo "Cannot guarantee rollback."
+                        rm -f "$ENV_PATH"
+                        exit 1
+                    fi
 
-                                echo "Health check failed after 12 attempts."
-                                docker logs --tail 50 DevOps-1-app
+                    echo "Previous image saved: $PREVIOUS_IMAGE"
+
+                    rollback() {
+                        echo "Deployment failed. Starting automatic rollback..."
+
+                        docker rm -f DevOps-1-app || true
+
+                        if ! docker run -d \
+                            --name DevOps-1-app \
+                            --restart unless-stopped \
+                            --network devops-1-network \
+                            --env-file "$ENV_PATH" \
+                            -p 5000:5000 \
+                            "$PREVIOUS_IMAGE"; then
+
+                            echo "ERROR: Failed to start previous image."
+                            rm -f "$ENV_PATH"
+                            exit 1
+                        fi
+
+                        echo "Checking restored application health..."
+
+                        for i in $(seq 1 12); do
+                            if curl -fsS http://localhost:5000/api/health; then
+                                echo "ROLLBACK SUCCESSFUL."
+                                echo "Previous version has been restored."
+
+                                rm -f "$ENV_PATH"
+
+                                # The new deployment failed.
+                                # Return failure so Jenkins records FAILURE.
                                 exit 1
-                            '
+                            fi
 
-                            echo "Displaying recent application logs..."
-                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
-                                "docker logs --tail 50 DevOps-1-app"
+                            echo "Rollback health attempt $i failed."
+                            sleep 5
+                        done
 
-                            echo "Production deployment completed."
-                        '''
+                        echo "ERROR: Rollback health check failed."
+                        docker logs --tail 50 DevOps-1-app || true
+
+                        rm -f "$ENV_PATH"
+                        exit 1
                     }
-                }
+
+                    echo "Removing existing application container..."
+
+                    docker rm -f DevOps-1-app || true
+
+                    echo "Starting new application container..."
+
+                    if ! docker run -d \
+                        --name DevOps-1-app \
+                        --restart unless-stopped \
+                        --network devops-1-network \
+                        --env-file "$ENV_PATH" \
+                        -p 5000:5000 \
+                        "$IMAGE"; then
+
+                        echo "ERROR: New container failed to start."
+                        rollback
+                    fi
+
+                    echo "Checking new application health..."
+
+                    for i in $(seq 1 12); do
+                        if curl -fsS http://localhost:5000/api/health; then
+                            echo "Health check passed."
+                            echo "New deployment is healthy."
+
+                            rm -f "$ENV_PATH"
+                            exit 0
+                        fi
+
+                        echo "Health check attempt $i failed."
+                        sleep 5
+                    done
+
+                    echo "New deployment failed its health check."
+                    docker logs --tail 50 DevOps-1-app || true
+
+                    rollback
+
+                    REMOTE_SCRIPT
+
+                    echo "Displaying application logs..."
+
+                    ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
+                        "docker logs --tail 50 DevOps-1-app"
+
+                    echo "Production deployment completed."
+                '''
             }
         }
+    }
+}
     }
 
     post {

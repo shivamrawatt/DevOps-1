@@ -80,7 +80,7 @@ app.get("/", async (req, res) => {
         <title>Message Application</title>
       </head>
       <body>
-        <h1>Messages-v1</h1>
+        <h1>Messages-v2</h1>
 
         <form action="/submit" method="POST">
           <input
