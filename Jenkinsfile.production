@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -97,8 +98,27 @@ pipeline {
                             ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
                                 "test \\"\\$(docker inspect -f '{{.State.Running}}' DevOps-1-app)\\" = true"
 
+                            echo "Removing the environment file from EC2..."
                             ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
                                 "rm -f '$ENV_PATH'"
+
+                            echo "Checking application health..."
+
+                            ssh -o StrictHostKeyChecking=accept-new "$REMOTE" '
+                                for i in $(seq 1 12); do
+                                    if curl -fsS http://localhost:5000/api/healt; then
+                                        echo "Health check passed."
+                                        exit 0
+                                    fi
+
+                                    echo "Health check attempt $i failed. Retrying in 5 seconds..."
+                                    sleep 5
+                                done
+
+                                echo "Health check failed after 12 attempts."
+                                docker logs --tail 50 DevOps-1-app
+                                exit 1
+                            '
 
                             echo "Displaying recent application logs..."
                             ssh -o StrictHostKeyChecking=accept-new "$REMOTE" \
