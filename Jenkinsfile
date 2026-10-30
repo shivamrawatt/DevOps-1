@@ -6,6 +6,10 @@ pipeline {
     nodejs 'NodeJS-22'
 }
 
+    triggers {
+    pollSCM('* * * * *')
+}
+
     stages {
         stage('Checkout') {
             steps {
@@ -96,6 +100,23 @@ pipeline {
                     '''
                 }
             }
+        }
+
+        stage('Trigger Production CD') {
+           steps {
+             build job: 'devops-1-CD-auto',
+             wait: false,
+             parameters: [
+                string(
+                    name: 'DOCKER_IMAGE',
+                    value: 'rrajivsingh/devops-1-app'
+                ),
+                string(
+                    name: 'DOCKER_TAG',
+                    value: "v${env.BUILD_NUMBER}"
+                )
+            ]
+    }
         }
     }
 

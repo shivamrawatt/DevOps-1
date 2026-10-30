@@ -1,6 +1,21 @@
 pipeline {
     agent any
 
+
+    parameters {
+    string(
+        name: 'DOCKER_IMAGE',
+        defaultValue: 'rrajivsingh/devops-1-app',
+        description: 'Docker Hub image repository'
+    )
+
+    string(
+        name: 'DOCKER_TAG',
+        defaultValue: '',
+        description: 'Docker image tag supplied by CI'
+    )
+}
+
     stages {
         stage('Validate Configuration') {
             steps {
@@ -13,38 +28,12 @@ pipeline {
             }
         }
 
-        stage('Approve Production Deployment') {
-            steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'prod-docker-image',
-                        variable: 'DOCKER_IMAGE'
-                    ),
-                    string(
-                        credentialsId: 'prod-image-tag',
-                        variable: 'DOCKER_TAG'
-                    )
-                ]) {
-                    input(
-                        message: "Deploy ${DOCKER_IMAGE}:${DOCKER_TAG} to production EC2?",
-                        ok: 'Deploy',
-                        submitter: ''
-                    )
-                }
-            }
-        }
+        
 
         stage('Deploy to EC2') {
             steps {
                 withCredentials([
-                    string(
-                        credentialsId: 'prod-docker-image',
-                        variable: 'DOCKER_IMAGE'
-                    ),
-                    string(
-                        credentialsId: 'prod-image-tag',
-                        variable: 'DOCKER_TAG'
-                    ),
+              
                     string(
                         credentialsId: 'ec2-public-ip',
                         variable: 'EC2_HOST'
@@ -58,7 +47,7 @@ pipeline {
                         sh '''
                             set -eu
 
-                            IMAGE="${DOCKER_IMAGE}:${DOCKER_TAG}"
+                         IMAGE="${DOCKER_IMAGE}:${DOCKER_TAG}"
                             REMOTE="ubuntu@${EC2_HOST}"
                             ENV_PATH="/home/ubuntu/devops-1-prod.env"
 
